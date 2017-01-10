@@ -1,13 +1,12 @@
 import * as React from 'react';
-import { Subscription, BehaviorSubject, Observable, Subject } from '@reactivex/rxjs';
+import { Subscription, BehaviorSubject, Observable } from 'rxjs';
 import { Activity, Media, IBotConnection, User, MediaType, ConnectionStatus } from './BotConnection';
 import { DirectLine } from './directLine';
 //import { BrowserLine } from './browserLine';
 import { History } from './History';
 import { Shell } from './Shell';
 import { createStore, FormatAction, HistoryAction, ConnectionAction, ChatStore } from './Store';
-import { strings } from './Strings';
-import { Unsubscribe } from 'redux';
+import { Dispatch, Provider } from 'react-redux';
 
 export interface FormatOptions {
     showHeader?: boolean
@@ -30,26 +29,20 @@ export interface ChatProps {
 export class Chat extends React.Component<ChatProps, {}> {
 
     private store = createStore();
-    private storeUnsubscribe: Unsubscribe;
     
     private activitySubscription: Subscription;
-    private typingActivitySubscription: Subscription;
     private connectionStatusSubscription: Subscription;
     private selectedActivitySubscription: Subscription;
-
-    private selectActivityCallback: (activity: Activity) => void;
-
-    private typingActivity$ = new Subject<Activity>();
 
     constructor(props: ChatProps) {
         super(props);
 
         konsole.log("BotChat.Chat props", props);
 
-        if (props.formatOptions)
-            this.store.dispatch({ type: 'Set_Format_Options', options: props.formatOptions } as FormatAction);
+        const locale = props.locale || window.navigator.language;
 
-        this.store.dispatch({ type: 'Set_Localized_Strings', strings: strings(props.locale || window.navigator.language) } as FormatAction);
+        this.store.dispatch<FormatAction>({ type: 'Set_Format_Options', options: props.formatOptions });
+        this.store.dispatch<FormatAction>({ type: 'Set_Locale', locale });
     }
 
     private handleIncomingActivity(activity: Activity) {
@@ -57,26 +50,22 @@ export class Chat extends React.Component<ChatProps, {}> {
         switch (activity.type) {
 
             case "message":
-                this.store.dispatch({ type: activity.from.id === state.connection.user.id ? 'Receive_Sent_Message' : 'Receive_Message', activity } as HistoryAction);
+                this.store.dispatch<HistoryAction>({ type: activity.from.id === state.connection.user.id ? 'Receive_Sent_Message' : 'Receive_Message', activity });
                 break;
 
             case "typing":
-                this.typingActivity$.next(activity);
+                this.store.dispatch<HistoryAction>({ type: 'Show_Typing', activity });
                 break;
         }
-    }
-
-    private selectActivity(activity: Activity) {
-        this.props.selectedActivity.next({ activity });
     }
 
     componentDidMount() {
         let props = this.props;
 
-        this.store.dispatch({ type: 'Start_Connection', user: props.user, bot: props.bot, botConnection: props.botConnection, selectedActivity: props.selectedActivity } as ConnectionAction);
+        this.store.dispatch<ConnectionAction>({ type: 'Start_Connection', user: props.user, bot: props.bot, botConnection: props.botConnection, selectedActivity: props.selectedActivity });
 
         this.connectionStatusSubscription = props.botConnection.connectionStatus$.subscribe(connectionStatus =>
-            this.store.dispatch({ type: 'Connection_Change', connectionStatus } as ConnectionAction)
+            this.store.dispatch<ConnectionAction>({ type: 'Connection_Change', connectionStatus })
         );
 
         this.activitySubscription = props.botConnection.activity$.subscribe(
@@ -84,39 +73,22 @@ export class Chat extends React.Component<ChatProps, {}> {
             error => konsole.log("activity$ error", error)
         );
 
-        this.typingActivitySubscription = this.typingActivity$.do(activity => {
-            this.store.dispatch({ type: 'Show_Typing', activity } as HistoryAction)
-            updateSelectedActivity(this.store);
-        })
-        .delay(3000)
-        .subscribe(activity => {
-            this.store.dispatch({ type: 'Clear_Typing', id: activity.id } as HistoryAction);
-            updateSelectedActivity(this.store);
-        });
-
         if (props.selectedActivity) {
-            this.selectActivityCallback = activity => this.selectActivity(activity);
             this.selectedActivitySubscription = props.selectedActivity.subscribe(activityOrID => {
-                this.store.dispatch({
+                this.store.dispatch<HistoryAction>({
                     type: 'Select_Activity',
                     selectedActivity: activityOrID.activity || this.store.getState().history.activities.find(activity => activity.id === activityOrID.id)
-                } as HistoryAction);
+                });
             });
         }
-
-        this.storeUnsubscribe = this.store.subscribe(() =>
-            this.forceUpdate()
-        );
     }
 
     componentWillUnmount() {
         this.connectionStatusSubscription.unsubscribe();
         this.activitySubscription.unsubscribe();
-        this.typingActivitySubscription.unsubscribe();
         if (this.selectedActivitySubscription)
             this.selectedActivitySubscription.unsubscribe();
         this.props.botConnection.end();
-        this.storeUnsubscribe();
     }
 
     render() {
@@ -129,76 +101,35 @@ export class Chat extends React.Component<ChatProps, {}> {
             </div>;
 
         return (
-            <div className={ "wc-chatview-panel" }>
-                { header }
-                <History store={ this.store } selectActivity={ this.selectActivityCallback } />
-                <Shell store={ this.store } />
-            </div>
+            <Provider store={ this.store }>
+                <div className={ "wc-chatview-panel" }>
+                    { header }
+                    <History />
+                    <Shell />
+                </div>
+            </Provider>
         );
     }
 }
 
-export const updateSelectedActivity = (store: ChatStore) => {
-    const state = store.getState();
-    if (state.connection.selectedActivity)
-        state.connection.selectedActivity.next({ activity: state.history.selectedActivity });
-}
-
-export const sendMessage = (store: ChatStore, text: string) => {
+export const sendMessage = (dispatch: Dispatch<HistoryAction>, text: string, from: User, locale: string) => {
     if (!text || typeof text !== 'string' || text.trim().length === 0)
         return;
-    let state = store.getState();
-    const clientActivityId = state.history.clientActivityBase + state.history.clientActivityCounter;
-    store.dispatch({
-        type: 'Send_Message',
-        activity: {
-            type: "message",
-            text,
-            from: state.connection.user,
-            timestamp: (new Date()).toISOString()
-        }
-    } as HistoryAction);
-    trySendMessage(store, clientActivityId);
-}
-
-const sendMessageSucceed = (store: ChatStore, clientActivityId: string) => (id: string) => {
-    konsole.log("success sending message", id);
-    store.dispatch({ type: "Send_Message_Succeed", clientActivityId, id } as HistoryAction);
-    updateSelectedActivity(store);
-}
-
-const sendMessageFail = (store: ChatStore, clientActivityId: string) => (error) => {
-    konsole.log("failed to send message", error);
-    store.dispatch({ type: "Send_Message_Fail", clientActivityId } as HistoryAction);
-    updateSelectedActivity(store);
-}
-
-export const trySendMessage = (store: ChatStore, clientActivityId: string, updateStatus = false) => {
-    if (updateStatus) {
-        store.dispatch({ type: "Send_Message_Try", clientActivityId } as HistoryAction);
-    }
-    let state = store.getState();
-    const activity = state.history.activities.find(activity => activity.channelData && activity.channelData.clientActivityId === clientActivityId);
-    if (!activity) {
-        konsole.log("trySendMessage: activity not found");
-        return;
-    }
-    
-    (activity.type === 'message' && activity.attachments && activity.attachments.length > 0
-        ? state.connection.botConnection.postMessageWithAttachments(activity)
-        : state.connection.botConnection.postActivity(activity)
-    ).subscribe(
-        sendMessageSucceed(store, clientActivityId),
-        sendMessageFail(store, clientActivityId)
-    );
-}
-
-export const sendPostBack = (store: ChatStore, text: string) => {
-    const state = store.getState();
-    state.connection.botConnection.postActivity({
+    dispatch({ type: 'Send_Message', activity: {
         type: "message",
         text,
-        from: state.connection.user
+        from,
+        locale,
+        timestamp: (new Date()).toISOString()
+    }});
+}
+
+export const sendPostBack = (botConnection: IBotConnection, text: string, from: User, locale: string) => {
+    botConnection.postActivity({
+        type: "message",
+        text,
+        from,
+        locale
     })
     .subscribe(id => {
         konsole.log("success sending postBack", id)
@@ -220,24 +151,18 @@ const attachmentsFromFiles = (files: FileList) => {
     return attachments;
 }
 
-export const sendFiles = (store: ChatStore) => (files: FileList) => {
-    let state = store.getState();
-    const clientActivityId = state.history.clientActivityBase + state.history.clientActivityCounter;
-    store.dispatch({
-        type: 'Send_Message',
-        activity: {
-            type: "message",
-            attachments: attachmentsFromFiles(files),
-            from: state.connection.user
-        }
-    } as HistoryAction);
-    trySendMessage(store, clientActivityId);
+export const sendFiles = (dispatch: Dispatch<HistoryAction>, files: FileList, from: User, locale: string) => {
+    dispatch({ type: 'Send_Message', activity: {
+        type: "message",
+        attachments: attachmentsFromFiles(files),
+        from,
+        locale
+    }});
 }
 
 export const renderIfNonempty = (value: any, renderer: (value: any) => JSX.Element ) => {
-    if (value === undefined) return;
-    if (typeof value === 'string' && value.length === 0) return;
-    return renderer(value);
+    if (value !== undefined && value !== null && (typeof value !== 'string' || value.length > 0))
+        return renderer(value);
 }
 
 export const konsole = {

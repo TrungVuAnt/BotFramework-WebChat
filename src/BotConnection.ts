@@ -1,4 +1,4 @@
-import { Observable, BehaviorSubject } from '@reactivex/rxjs';
+import { Observable, BehaviorSubject } from 'rxjs';
 
 export interface Conversation {
     conversationId: string,
@@ -75,7 +75,20 @@ export interface Receipt {
         total?: string,
         buttons?: Button[]
     }
-}    
+}  
+
+// Deprecated format for Skype channels. For testing legacy bots in Emulator only.
+export interface FlexCard {
+    contentType: "application/vnd.microsoft.card.flex",
+    content: {
+        title?: string,
+        subtitle?: string,
+        text?: string,
+        images?: { url: string, tap?: Button }[],
+        buttons?: Button[],
+        aspect?: string
+    }
+}  
 
 export interface AudioCard {
     contentType: "application/vnd.microsoft.card.audio",
@@ -118,7 +131,7 @@ export interface AnimationCard {
     }
 }
 
-export type Attachment = Media | HeroCard | Thumbnail | Signin | Receipt | AudioCard | VideoCard | AnimationCard;
+export type Attachment = Media | HeroCard | Thumbnail | Signin | Receipt | AudioCard | VideoCard | AnimationCard | FlexCard;
 
 export interface User {
     id: string,
@@ -168,6 +181,5 @@ export interface IBotConnection {
     connectionStatus$: BehaviorSubject<ConnectionStatus>,
     activity$: Observable<Activity>,
     end(): void,
-    postMessageWithAttachments(message: Message): Observable<string>,
     postActivity(activity: Activity): Observable<string>
 }
