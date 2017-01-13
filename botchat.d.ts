@@ -27,7 +27,8 @@ export interface User {
 
 export interface ChatProps {
     user: User,
-    botConnection: any,
+    botConnection?: any,
+    directLine?: DirectLineOptions,
     locale?: string,
     selectedActivity?: any,
     formatOptions?: FormatOptions
@@ -36,4 +37,5 @@ export interface ChatProps {
 export type AppProps = ChatProps;
 
 export declare const App: (props: AppProps, container: HTMLElement) => void;
-export declare class Chat extends React.Component<ChatProps, {}> {};
+export declare class Chat extends React.Component<ChatProps, {}> {}
+
